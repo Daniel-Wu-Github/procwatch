@@ -1,0 +1,85 @@
+# Python environments and build output
+.venv/
+.model-venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+build/
+dist/
+wheels/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets and local environment (never commit)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.mobileprovision
+credentials*.json
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Editors and IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs and local runtime state
+*.log
+logging/commit_log.md
+.claude/notification_log.txt
+
+# Machine-specific outputs: screenshots, API captures, tokens, dry-run notes
+artifacts/
+.playwright-mcp/
+
+# Model weights and caches (large, licensed separately)
+*.safetensors
+*.gguf
+.cache/
+huggingface/
+
+# AI assistant and agent workflow files (kept locally, never published)
+.claude/
+CLAUDE.md
+HANDOFF_PROMPT.md
+logging/
+.githooks/
+scripts/notify.sh
+scripts/notify-approval.sh
+scripts/post-edit-check.sh
+scripts/gemini-hook-adapter.sh
+.gemini/
+GEMINI.md
+AGENTS.md
+.cursor/
+.cursorrules
+.windsurf/
+.aider*
+.github/copilot-instructions.md
+
+# Optional local model host: kept on this machine only, not part of the published project.
+# procwatch talks to any OpenAI-compatible endpoint you configure (see README, Explain).
+local_model/
+tests/unit/local_model/
+scripts/install_local_model.py
+scripts/local-model
+docs/LOCAL_MODEL.md
+
+# Private working notes and backups
+launch.md
+*.bundle

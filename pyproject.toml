@@ -1,0 +1,43 @@
+[project]
+name = "procwatch"
+version = "1.0.0"
+description = "A local macOS dashboard that shows where memory, CPU and GPU go, and lets you safely stop what you do not need."
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Daniel Wu"}]
+keywords = ["macos", "process", "memory", "monitor", "activity-monitor"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Environment :: Web Environment",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS :: MacOS X",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: System :: Monitoring",
+]
+requires-python = ">=3.12"
+dependencies = ["psutil>=5.9"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.urls]
+Homepage = "https://github.com/Daniel-Wu-Github/procwatch"
+Issues = "https://github.com/Daniel-Wu-Github/procwatch/issues"
+
+[project.scripts]
+procs = "procwatch.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-data]
+procwatch = ["page.html"]
+
+[tool.setuptools]
+packages = ["procwatch"]
