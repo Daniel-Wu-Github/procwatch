@@ -32,6 +32,20 @@ All screenshots use simulated processes from the recording-only test fixture.
 | **Free up basket with an estimate** | **Confirmation before anything is signalled** |
 | ![Basket showing the estimated saving](docs/images/free-up-basket.png) | ![Confirm dialog listing exactly which processes receive the signal](docs/images/confirm-stop.png) |
 
+## Install
+
+Requires macOS (Apple Silicon is the verified platform) and Python 3.12 or newer.
+
+```sh
+brew install pipx                # once, if you do not have pipx
+pipx install git+https://github.com/Daniel-Wu-Github/procwatch.git
+procs --read-only                # first run: look around without being able to signal anything
+procs                            # normal mode: Stop and Force enabled
+```
+
+To upgrade, run `pipx upgrade procwatch`; to remove it, `pipx uninstall procwatch`.
+To work on the code instead, see [Run from a checkout](#run-from-a-checkout-development).
+
 ## Everyday use
 
 From any terminal, run:
@@ -42,8 +56,10 @@ procs
 
 The browser opens with Stop and Force enabled. Select a group or process,
 choose Stop, and confirm. If it does not quit, Force is a separate decision.
-Return to the terminal and press **Ctrl-C** to stop procwatch. Closing the browser
-tab alone leaves its local server running.
+procwatch is one session tied to the terminal that started it. It stops cleanly when you press
+**Ctrl-C**, close that terminal, or close the browser tab (a reload is fine: it gets a few seconds'
+grace). If the browser crashes without telling procwatch, press Ctrl-C. With `--no-browser` it
+runs until Ctrl-C or until a page you opened is closed.
 
 Only one dashboard runs per user. Running `procs` again does not start a second
 server: it prints the running instance's URL and mode, and reopens it in the browser
@@ -58,7 +74,7 @@ Read-only mode is optional:
 procs --read-only           # inspect and preview without sending signals
 procs --no-browser          # print the URL without opening a browser
 procs --rules PATH          # default ~/.config/procwatch/rules.toml
-procs --projects-root PATH  # default ~/projects
+procs --projects-root PATH  # folder whose subfolders count as projects (default ~/projects)
 procs --port 8765           # optional fixed port; default picks a free port
 ```
 
@@ -98,7 +114,7 @@ Flags override the file, and an unknown key is an error rather than ignored.
 Bring your own model: any server that speaks the OpenAI chat-completions API works, whether it
 runs on this Mac, on another machine you control, or is a hosted API.
 
-## Install in a fresh checkout
+## Run from a checkout (development)
 
 ```sh
 python3.12 -m venv .venv
@@ -111,7 +127,7 @@ Both Stop and Force require a confirmation listing the process tree and refusals
 Stop does not escalate automatically.
 
 It is a local web page served only on `127.0.0.1`, protected by a random
-per-run token. Stop the server with Ctrl-C when finished. Request logs omit the token; the startup URL intentionally includes it.
+per-run token. The session ends with Ctrl-C, a closed terminal or a closed browser tab. Request logs omit the token; the startup URL intentionally includes it. A link from an earlier run shows a short "link expired" page.
 
 - The UI is light-only, modern and keyboard-accessible. It updates live every
   2 s (animated) but pauses while you hover or a dialog is open. Protected
@@ -226,3 +242,10 @@ The normal pytest suite never signals real processes. The opt-in runner verifies
 graceful cleanup, SIGKILL, no automatic escalation, children-first group shutdown,
 deduplication, an unrelated control, authorization failures, and CLI shutdown.
 Details and the optional Playwright check are in [the validation guide](docs/VALIDATION.md).
+
+## Project
+
+- [LICENSE](LICENSE) (MIT), [CHANGELOG](CHANGELOG.md), [CONTRIBUTING](CONTRIBUTING.md)
+- Found a security problem? See [SECURITY.md](SECURITY.md) and report it privately.
+- procwatch was built with AI assistance (Claude Code) under test-first rules: the tests in `tests/` are the spec, and the
+  design and safety decisions are written down in [PLAN.md](PLAN.md).

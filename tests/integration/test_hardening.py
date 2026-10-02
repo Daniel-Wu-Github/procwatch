@@ -76,11 +76,10 @@ def test_get_api_accepts_the_token_in_a_header_and_query_still_works(serve):
     assert get(port, f'/api/snapshot?metric=mem&token={TOKEN}')[0] == 200
 
 
-def test_page_strips_the_token_from_the_address_bar_and_sends_it_as_a_header():
+def test_page_sends_the_token_as_a_header_not_in_fetch_urls():
     from pathlib import Path
     html = Path('procwatch/page.html').read_text()
-    assert 'history.replaceState' in html
-    assert "searchParams.set('token'" not in html
+    assert "searchParams.set('token'" not in html and "'X-Procwatch-Token':config.token" in html
 
 
 def test_bad_input_is_rejected_without_echoing_it_back(serve):
@@ -116,3 +115,17 @@ def test_explain_has_a_small_concurrency_cap(serve):
         worker.join(5)
     assert sorted(results) == [200, 200]
     assert post(port, '/api/explain', {'pids': [10]})[0] == 200
+
+
+def test_expired_link_gets_a_helpful_page_for_browsers_but_never_for_foreign_hosts(serve):
+    port = serve()
+    for path in ('/', '/?token=wrong'):
+        status, body, headers = get(port, path, {'Accept': 'text/html'})
+        assert status == 403 and headers['Content-Type'].startswith('text/html')
+        assert 'procs' in body and TOKEN not in body and '<script' not in body
+        assert "default-src 'none'" in headers['Content-Security-Policy']
+    status, body, headers = get(port, '/')
+    assert status == 403 and headers['Content-Type'] == 'application/json'
+    status, body, headers = get(port, f'/?token={TOKEN}', {'Accept': 'text/html', 'Host': 'evil.example'})
+    assert status == 403 and headers['Content-Type'] == 'application/json'
+    assert get(port, '/api/snapshot?metric=mem', {'Accept': 'text/html'})[2]['Content-Type'] == 'application/json'

@@ -23,11 +23,12 @@
 <script>
 'use strict';
 const config=__PROCWATCH_CONFIG__;
-history.replaceState(null,'',location.pathname);
+addEventListener('pagehide',()=>{try{fetch('/api/closed',{method:'POST',keepalive:true,headers:{'Content-Type':'application/json','X-Procwatch-Token':config.token},body:JSON.stringify({id:config.pageId})});}catch(e){}});
+addEventListener('pageshow',e=>{if(e.persisted)location.reload();});
 const $=id=>document.getElementById(id), ns='http://www.w3.org/2000/svg';
 const state={metric:'mem',group:null,parent:null,data:null,view:null,selected:null,pids:new Set(),groups:new Set(),expanded:new Set(),pauses:new Set(),preview:null,revision:0,previewRevision:0,loading:false};
 const colors=new Map(), arcNodes=new Map(), reduce=matchMedia('(prefers-reduced-motion: reduce)');
-let pendingAction=null, confirmedPids=[], animation=0, toastTimer;
+let pendingAction=null, confirmedPids=[], confirmedTargets=[], animation=0, toastTimer;
 let dialogRevision=0, actionInFlight=false;
 function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
 function button(text,handler,label){const n=el('button',text);n.type='button';if(label)n.setAttribute('aria-label',label);n.addEventListener('click',handler);return n;}
@@ -69,7 +70,7 @@ function metric(next){state.metric=next;document.querySelectorAll('[data-metric]
 async function confirmAction(action){
   if(config.readOnly||actionInFlight||$('confirm').open)return;
   const revision=++dialogRevision;
-  pause('dialog',true);pendingAction=action;confirmedPids=[];
+  pause('dialog',true);pendingAction=action;confirmedPids=[];confirmedTargets=[];
   $('cancel').disabled=false;$('cancel').textContent='Cancel';
   $('confirm-title').textContent='Confirm '+(action==='stop'?'Stop':'Force');
   $('confirm-copy').textContent='Checking the exact process list…';
@@ -79,7 +80,7 @@ async function confirmAction(action){
   try{
     const p=await api('/api/preview',selection());
     if(revision!==dialogRevision||!$('confirm').open||pendingAction!==action)return;
-    confirmedPids=p.pids;
+    confirmedPids=p.pids;confirmedTargets=p.targets;
     const byPid=new Map(state.data.procs.map(p=>[p.pid,p]));
     $('confirm-copy').textContent=`${p.pids.length} processes will receive ${action==='stop'?'SIGTERM':'SIGKILL'}, children first. Estimated saving: ${bytes(p.frees.mem)}.`;
     $('confirm-list').replaceChildren();
@@ -95,7 +96,7 @@ $('cancel').onclick=()=>{if(!actionInFlight)$('confirm').close();};
 $('confirm').addEventListener('cancel',e=>{if(actionInFlight)e.preventDefault();});
 $('confirm').addEventListener('close',()=>{
   if($('confirm').open)return;
-  dialogRevision++;pause('dialog',false);pendingAction=null;confirmedPids=[];
+  dialogRevision++;pause('dialog',false);pendingAction=null;confirmedPids=[];confirmedTargets=[];
 });
 $('confirm-action').onclick=async()=>{
   if(config.readOnly||actionInFlight||!pendingAction||!confirmedPids.length||$('confirm-action').disabled)return;
@@ -104,7 +105,7 @@ $('confirm-action').onclick=async()=>{
   $('confirm-copy').textContent='Sending '+(action==='stop'?'Stop':'Force')+'… Please wait for the result.';
   renderBasket();
   try{
-    const result=await api('/api/'+action,{pids:[...confirmedPids]});
+    const result=await api('/api/'+action,{confirmed:[...confirmedTargets]},60000);
     notify([...result.outcomes.map(o=>'PID '+o.pid+': '+o.status),...result.refused.map(r=>'PID '+r.pid+': '+r.reason)].join('\n'));
     actionInFlight=false;$('confirm').close();
     state.pids.clear();state.groups.clear();preview();refresh(true);

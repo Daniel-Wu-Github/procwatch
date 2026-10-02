@@ -27,7 +27,7 @@ The venv command (`.venv/bin/procs`) is usable directly. Joint grouping-rule rev
 | Live updates | **Animated, paused while you interact** (mouse on a slice, dialog open) with a live/paused indicator | Feels alive but never moves under the cursor. Cost: pause logic. |
 | Layout | **Pie left, details panel right** (stacks under 900 px) | Standard dashboard pattern. |
 | Protected processes | **Shown dimmed with a lock and the reason** | The pie and its sub-lists stay consistent. |
-| Explain model | **Optional, user-configured OpenAI-compatible endpoint** (`config.toml` `[explain]`, flags override). Off until configured; loopback by default; a non-loopback endpoint needs `allow_remote` and https. (Decided 2026-10-02; supersedes the hardcoded `127.0.0.1:8011` shared service.) | No bundled weights or licence burden; any local or hosted model works. Cost: one more config file; remote endpoints can leave the machine, so they are opt-in, flagged in the UI, and never receive command lines or usernames. The shipped `local_model/` service stays as an optional, separate example. |
+| Explain model | **Optional, user-configured OpenAI-compatible endpoint** (`config.toml` `[explain]`, flags override). Off until configured; loopback by default; a non-loopback endpoint needs `allow_remote` and https. (Decided 2026-10-02; supersedes the hardcoded `127.0.0.1:8011` shared service.) | No bundled weights or licence burden; any local or hosted model works. Cost: one more config file; remote endpoints can leave the machine, so they are opt-in, flagged in the UI, and never receive command lines or usernames. No model server is bundled. |
 | Instances | **One dashboard per user, enforced by an OS file lock** (`instance.py`, `flock` on `~/Library/Caches/procwatch/instance.lock`, override with `PROCWATCH_INSTANCE_DIR`) | A repeat `procs` reuses the running URL instead of starting a second server that could signal the same processes. The lock dies with the process, so a crash never leaves a stale lease; the lock file is never unlinked. Cost: a repeat launch cannot change mode or options. |
 | Process explanations | **Advisory generation from bounded process facts** | No command arguments or usernames sent; generated text never authorizes or performs signals. A custom prompt replaces only the instruction text; a fixed safety guard is always appended. At most 2 explanations in flight (HTTP 429 beyond that). |
 
@@ -109,7 +109,9 @@ def machine() -> MachineStats        # psutil for memory/CPU; GPU from `ioreg -r
 
 # server.py
 def create_server(*, collect_fn, machine_fn, signal_fn, token: str, projects_root: str, rules=(), me: str,
-                  self_pid: int, allow_kill: bool = True, host: str = "127.0.0.1", port: int = 0) -> ThreadingHTTPServer
+                  self_pid: int, allow_kill: bool = True, host: str = "127.0.0.1", port: int = 0,
+                  explain_fn=None, explain_config=None, close_grace: float = 3.0,
+                  startup_ancestors: frozenset = frozenset()) -> ThreadingHTTPServer   # .wait_for_actions(timeout)
 ```
 
 ### Grouping rules (auto-detect order; first hit wins)
@@ -160,8 +162,10 @@ a missing `label`, or no condition → `RulesError` (never silently ignored).
   procwatch itself; any ancestor of procwatch (your terminal/shell); a
   protected name (`launchd`, `kernel_task`, `WindowServer`, `loginwindow`,
   `Finder`, `Dock`, `SystemUIServer`, `coreaudiod`) or an executable under
-  `/usr/libexec/` or `/System/Library/` (added 2026-10-02; Apple apps in
-  `/System/Applications/` stay stoppable).
+  `/usr/libexec/`, `/usr/sbin/`, `/sbin/`, `/System/Library/`, `/System/Cryptexes/App/usr/`,
+  `/System/Cryptexes/OS/`, `/System/Volumes/Preboot/Cryptexes/OS/` or `/Library/Apple/` (added 2026-10-02; Apple
+  apps such as those in `/System/Applications/` and Safari stay stoppable). The terminal/shell chain above
+  procwatch is also captured once at startup and stays protected if a parent later drops out of the table.
 - Stopping a group signals the **whole tree children-first**; children of
   an allowed target are included, children of a *refused* process are not.
 - **PID-reuse guard:** `execute` re-reads `create_time` and skips a pid whose
@@ -184,7 +188,18 @@ a missing `label`, or no condition → `RulesError` (never silently ignored).
 3. `killer.execute(plan, SIGTERM|SIGKILL, signal_fn=..., create_time_of=...)`,
    where `create_time_of(pid)` does a **fresh** `collect_fn()` lookup
    (second call) and returns that pid's `create_time`, or `None` if absent.
-   That fresh read is the pid-reuse guard; do not reuse the planning table.
+   That fresh read is the pid-reuse guard; do not reuse the planning table. (Since 2026-10-02 the
+   fresh read is **one** `collect_fn()` for the whole batch, not one per target.)
+
+   **Confirmed requests (what the dashboard sends):** `POST /api/stop|force` with
+   `{"confirmed": [{"pid", "create_time"}…]}` (the `targets` list returned by the preview, children first)
+   signals exactly those pids in that order, with **no re-planning and no new children**. The table is read once;
+   each pid is re-checked by `safety.check`, and a pid whose start time differs from the confirmed one is
+   reported `reused` and never signalled (this closes the stale-click gap between the dialog and the click);
+   a missing pid is `gone`; pid <= 1 and procwatch itself are refused even if absent. `confirmed` cannot be
+   combined with `pids`/`groups`. Bodies with `pids`/`groups` only are still accepted and are planned at
+   execute time (used by the tests and `scripts/operational_check.py`); they have no stale-click protection and
+   the dashboard never sends them.
 
 ### HTTP API (`server.py`)
 
@@ -195,14 +210,15 @@ a missing `label`, or no condition → `RulesError` (never silently ignored).
 - `GET /api/breakdown?metric=mem|cpu&group=NAME[&parent=PID]&token=T` → `breakdown(...)`.
   `gpu` → 400 (no per-app data); unknown group or a parent that is not in the group → 400.
 - `POST /api/preview` (allowed in read-only mode: it changes nothing), body as for stop →
-  `{"pids":[…everything that would be signalled, children included…], "refused":[{pid,reason}], "frees":{"mem":bytes,"cpu":pct}}`.
-- `POST /api/stop` / `POST /api/force`, JSON body `{"pids":[…], "groups":["Name",…]}` (either or both,
-  at least one non-empty), header `X-Procwatch-Token`. Returns
+  `{"pids":[…everything that would be signalled, children included…], "targets":[{pid, create_time}…] (same order),
+  "refused":[{pid,reason}], "frees":{"mem":bytes,"cpu":pct}}`.
+- `POST /api/stop` / `POST /api/force`, JSON body `{"confirmed":[{pid, create_time}…]}` (see above) or the legacy
+  `{"pids":[…], "groups":["Name",…]}` (either or both, at least one non-empty), header `X-Procwatch-Token`. Returns
   `{"outcomes":[{pid,status}], "refused":[{pid,reason}]}`.
 - `POST /api/explain` (same body, up to 12 processes) → `{"explanation", "pids", "advisory": true}`;
   503 when Explain is not configured or the endpoint is unavailable; 429 when two are already in flight.
 - GET requests may carry the token as `?token=` or the `X-Procwatch-Token` header (the page uses the
-  header and removes the token from its address bar after load).
+  header on its fetches).
 - 403 for a bad token/Host/Origin (and for stop/force in read-only mode), 404 for
   unknown paths, 400 for a malformed body, an unknown group or an unknown metric.
 
@@ -390,11 +406,37 @@ quit; Force ends it immediately" under the buttons.
     hidden when unconfigured, remote host badge. Hardening from the pre-publication review:
     path-based protection of macOS services, `O_NOFOLLOW` lease file with directory owner/mode check,
     repeat launch opens only `http://127.0.0.1:<port>` URLs, per-response CSP nonce (no
-    `unsafe-inline` for scripts), token removed from the address bar and fetch URLs, no input echo in
+    `unsafe-inline` for scripts), token sent as a header instead of in fetch URLs, no input echo in
     400s, Explain concurrency cap. Verified: 253 tests pass; the nonce page loaded in Chromium against
-    the recording-only fixture with no console errors, no token in the address bar, and Explain hidden.
-    Not verified: a real configured endpoint end to end; reload after the token is stripped returns
-    403 (re-run `procs`).
+    the recording-only fixture with no console errors and Explain hidden.
+    Later the same day: Explain was exercised against a real local OpenAI-compatible endpoint in
+    `--read-only` mode (answered in 7.6 s including model load; the 8B model appended invented process
+    entries, so the guard now says to describe only the listed processes), `scripts/read_only_check.py`
+    passed against a real read-only server, and the Explain-enabled page (remote host badge, literal
+    model text) was checked in Chromium against a recording-only fixture. A stale link now shows a
+    "link expired" page (HTTP 403, HTML only for a genuine Host).
+
+11. **One session per terminal — complete (2026-10-02):** Ctrl-C, SIGTERM and SIGHUP (terminal closed) stop
+    `procs` cleanly and release the lease; closing the last browser tab stops it after a 3 s grace period
+    (each page load gets an id; `pagehide` reports it through a keepalive `POST /api/closed`; a reload registers
+    a new id inside the grace period). Request threads are daemonic and shutdown does not join them, so Ctrl-C
+    never waits for a slow Explain call. Tests: `tests/integration/test_session_lifecycle.py` (real subprocess,
+    real sockets). Verified in Chromium against the recording-only fixture that a reload keeps the session and
+    leaving the page stops it, with zero recorded signals. Not verified: a real Chrome/Safari tab close
+    (Playwright's `page.close()` does not fire `pagehide`). Known limit: a browser crash with no `pagehide` leaves
+    the server running until Ctrl-C; a heartbeat fallback was rejected because sleep/wake and hidden-tab timer
+    throttling would stop healthy sessions. The session no longer outlives the tab, so the earlier idea of
+    stripping the token from the address bar was dropped: reloads keep working and a stale link is dead.
+
+12. **Core review fixes — complete (2026-10-02):** from an independent read-only review. Confirmed
+    targets (stale-click and new-child gaps closed), one process-table read per batch, per-target error isolation in
+    `execute` (any exception becomes `error`), startup ancestor chain, extra protected prefixes, and the CLI
+    waits up to 10 s for an in-flight Stop/Force to finish before exiting (`wait_for_actions`). Tests:
+    `tests/integration/test_confirmed_targets.py`, `tests/unit/test_review_fixes.py`; all 307 tests pass. Verified in
+    Chromium against the recording-only fixture: the dialog-race regression passes with the new body, and a real
+    page-to-server Stop recorded exactly `SIGTERM 102, SIGTERM 101` (children first) and nothing else.
+    Not verified: real signals through the new path (use `scripts/operational_check.py --allow-real-signals`, which
+    still exercises the legacy body, plus a `--browser` run, with explicit approval).
 
 Unvalidated: shutdown/data preservation for real user applications and databases, sustained-load performance,
 restricted process fields that macOS denies, and browsers other than Chromium.

@@ -70,7 +70,7 @@ def execute(stop_plan, sig, *, signal_fn, create_time_of):
             status = "gone"
         except PermissionError:
             status = "denied"
-        except OSError:
+        except Exception:      # one failure, expected or not, never aborts the rest of the batch
             status = "error"
         outcomes.append(Outcome(target.pid, status))
     return outcomes

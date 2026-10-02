@@ -98,6 +98,8 @@ def main():
                 if authenticated:
                     h.setdefault('X-Procwatch-Token', token)
                 selected = body.get('pids', []) if isinstance(body, dict) else []
+                if isinstance(body, dict) and isinstance(body.get('confirmed'), list):
+                    selected = [t.get('pid') for t in body['confirmed'] if isinstance(t, dict)]
                 if isinstance(selected, list):
                     assert all(type(pid) is int and pid in identities for pid in selected)
                 if isinstance(body, dict) and isinstance(body.get('groups', []), list):
@@ -119,6 +121,13 @@ def main():
         tree_pids = [int((tree_folder/f'{name}.pid').read_text()) for name in ('tree','branch','leaf')]
         for pid in tree_pids:
             identities[pid] = psutil.Process(pid).create_time()
+        c_tree = start('qa-c-tree', 'tree')
+        c_tree_folder = processes['qa-c-tree'][1]
+        wait_for(lambda: (c_tree_folder/'leaf.ready').exists())
+        c_tree_pids = [int((c_tree_folder/f'{name}.pid').read_text()) for name in ('tree','branch','leaf')]
+        for pid in c_tree_pids:
+            identities[pid] = psutil.Process(pid).create_time()
+        c_stubborn = start('qa-c-stubborn', 'stubborn')
         status, snapshot, headers = call('/api/snapshot')
         assert status == 200 and headers['Cache-Control'] == 'no-store'
         actual = {p['pid']:p for p in snapshot['procs']}
@@ -163,6 +172,32 @@ def main():
         assert tree.wait(timeout=10) == 0
         assert all((tree_folder/f'{name}.done').exists() for name in ('tree','branch','leaf'))
         record('Group plus PID deduplicates a three-level tree and stops children first', order=list(reversed(tree_pids)))
+        # The confirmed-target path: exactly what the dashboard sends after the user confirms.
+        status, preview, _ = call('/api/preview', {'pids':[c_tree.pid]})
+        assert status == 200 and preview['pids'] == list(reversed(c_tree_pids))
+        assert [t['pid'] for t in preview['targets']] == preview['pids']
+        assert all(t['create_time'] == identities[t['pid']] for t in preview['targets'])
+        record('Preview returns every real target with its start time, children first')
+        status, data, _ = call('/api/stop', {'confirmed':[{'pid':control.pid, 'create_time':identities[control.pid]+1.0}]})
+        assert status == 200 and data['outcomes'] == [{'pid':control.pid,'status':'reused'}] and alive(control)
+        record('Confirmed target whose start time changed is reported reused and is not signalled (stale-click guard)')
+        status, data, _ = call('/api/stop', {'confirmed':preview['targets']})
+        assert status == 200 and [o['pid'] for o in data['outcomes']] == preview['pids']
+        assert all(o['status']=='signalled' for o in data['outcomes'])
+        assert c_tree.wait(timeout=10) == 0
+        assert all((c_tree_folder/f'{name}.done').exists() for name in ('tree','branch','leaf'))
+        assert alive(control)
+        record('Confirmed Stop signals exactly the confirmed three-level tree, children first', order=preview['pids'])
+        status, preview, _ = call('/api/preview', {'pids':[c_stubborn.pid]})
+        status, data, _ = call('/api/stop', {'confirmed':preview['targets']})
+        assert status == 200 and data['outcomes'] == [{'pid':c_stubborn.pid,'status':'signalled'}]
+        wait_for(lambda: (processes['qa-c-stubborn'][1]/'stubborn.term').exists())
+        time.sleep(3)
+        assert alive(c_stubborn)
+        record('Confirmed Stop on a SIGTERM-ignoring target does not escalate')
+        status, data, _ = call('/api/force', {'confirmed':preview['targets']})
+        assert status == 200 and c_stubborn.wait(timeout=10) == -signal.SIGKILL and alive(control)
+        record('Confirmed Force terminates it with SIGKILL; unrelated control survives')
         status, data, _ = call('/api/stop', {'pids':[graceful.pid]})
         assert status == 200 and not data['outcomes'] and data['refused'][0]['pid']==graceful.pid
         assert alive(control)

@@ -18,7 +18,7 @@ async (page) => {
     const promise = new Promise(r => { resolve = r; });
     return { promise, resolve };
   };
-  const preview = pids => ({ pids, refused: [], frees: { mem: 123456, cpu: 1 } });
+  const preview = pids => ({ pids, targets: pids.map(pid => ({ pid, create_time: pid })), refused: [], frees: { mem: 123456, cpu: 1 } });
   const nextPaint = async p => p.evaluate(() => new Promise(resolve => {
     requestAnimationFrame(() => requestAnimationFrame(resolve));
   }));
@@ -69,7 +69,7 @@ async (page) => {
     const submitted = await submission.promise;
     observations.stalePreview.submitted = submitted;
     check(submitted.url.endsWith('/api/force'), 'Confirmation must submit the Force action');
-    check(JSON.stringify(submitted.body.pids) === '[101]', 'Force submission must use latest preview PID 101, never stale Stop PID 102');
+    check(JSON.stringify((submitted.body.confirmed || []).map(t => t.pid)) === '[101]', 'Force submission must use latest preview PID 101, never stale Stop PID 102');
   } finally {
     await stale.close();
   }

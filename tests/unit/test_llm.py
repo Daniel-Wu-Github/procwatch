@@ -127,3 +127,9 @@ def test_loopback_requests_bypass_environment_proxies(monkeypatch):
     uses_proxy = lambda url: any(isinstance(h, ProxyHandler) for h in _opener(url).handlers)
     assert not uses_proxy('http://127.0.0.1:1/v1/chat/completions')
     assert uses_proxy('https://api.example.com/v1/chat/completions')
+
+
+def test_guard_forbids_inventing_processes_for_default_and_custom_prompts():
+    for config in (CFG, ExplainConfig(base_url='http://127.0.0.1:1/v1', prompt='Be brief.')):
+        _, payload = _sent(config)
+        assert 'Only describe the processes in the list' in payload['messages'][0]['content']

@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 
-_PROTECTED_EXE_PREFIXES = ("/usr/libexec/", "/System/Library/")
+_PROTECTED_EXE_PREFIXES = (
+    "/usr/libexec/", "/usr/sbin/", "/sbin/", "/System/Library/", "/System/Cryptexes/App/usr/",
+    "/System/Cryptexes/OS/", "/System/Volumes/Preboot/Cryptexes/OS/", "/Library/Apple/",
+)
 
 
 @dataclass(frozen=True)

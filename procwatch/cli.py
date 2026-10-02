@@ -4,6 +4,7 @@ import getpass
 import os
 from pathlib import Path
 import secrets
+import signal
 import webbrowser
 from urllib.parse import urlsplit
 
@@ -19,6 +20,15 @@ def _loopback_url(url):
         return parts.scheme == 'http' and parts.hostname == '127.0.0.1' and parts.port is not None
     except (ValueError, TypeError, AttributeError):
         return False
+
+
+def _startup_ancestors():
+    """The terminal/shell chain above this process, captured once so a vanished parent cannot unprotect it."""
+    import psutil
+    try:
+        return frozenset(p.pid for p in psutil.Process(os.getpid()).parents())
+    except psutil.Error:
+        return frozenset()
 
 
 def main(argv=None):
@@ -74,7 +84,7 @@ def run(args, rules, parser, instance, explain):
         server = create_server(collect_fn=collect, machine_fn=machine, signal_fn=os.kill, token=token,
                                projects_root=str(args.projects_root.expanduser().resolve()), rules=rules,
                                me=getpass.getuser(), self_pid=os.getpid(), allow_kill=not args.read_only, port=args.port,
-                               explain_config=explain)
+                               explain_config=explain, startup_ancestors=_startup_ancestors())
     except OSError as exc:
         parser.error(f'Unable to start server: {exc}')
     url = f'http://127.0.0.1:{server.server_address[1]}/?token={token}'
@@ -85,11 +95,20 @@ def run(args, rules, parser, instance, explain):
         print(f'Explain sends process names and paths to {explain.host}.', flush=True)
     if not args.no_browser:
         webbrowser.open(url)
+    def stop(signum, frame):
+        raise KeyboardInterrupt
+    for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):   # Ctrl-C, terminate, terminal closed
+        signal.signal(number, stop)
     try:
         server.serve_forever()
+        if getattr(server, 'closed_by_tab', False):
+            print('Browser tab closed; procwatch stopped.', flush=True)
     except KeyboardInterrupt:
         print('\nprocwatch stopped.', flush=True)
     finally:
+        wait = getattr(server, 'wait_for_actions', None)
+        if wait:
+            wait(10)    # let an in-flight Stop/Force finish and report instead of being cut off
         server.server_close()
     return 0
 
