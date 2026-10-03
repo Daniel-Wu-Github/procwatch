@@ -5,6 +5,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 ## [Unreleased]
 
 ### Added
+- A second command name, `procwatch`, alongside the `procs` alias (the Homebrew `procs` tool uses the same name).
 - Configurable Explain: point it at any OpenAI-compatible chat endpoint (Ollama, LM Studio, a hosted API)
   through `~/.config/procwatch/config.toml` or `--explain-url`, `--explain-model`, `--allow-remote-explain`.
   Off until configured. Optional custom prompt file (a fixed safety guard is always appended) and an API key
@@ -12,6 +13,12 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 - Demo GIF and screenshots, `LICENSE`, `SECURITY.md`, `CONTRIBUTING.md` and a CI workflow.
 
 ### Changed
+- **Breaking (API):** `POST /api/stop` and `/api/force` accept only the `confirmed` list from a preview. The old
+  `pids`/`groups` body is rejected with HTTP 400, so the stale-click guard cannot be bypassed.
+- The dashboard stops polling while its tab is hidden and refreshes when it becomes visible again. The server shares one
+  process-table read between read-only requests for up to a second (`procs` only; Stop, Force and previews always read fresh).
+- The checkbox column header has a screen-reader label (axe-core reports no WCAG 2.1 A/AA or best-practice violations).
+- Declared support for Python 3.13 and 3.14 (the suite passes on both).
 - Stop and Force now signal exactly the processes you confirmed. The preview returns each target's start time, the
   page sends them back, and a pid whose start time changed (reused by another process) is skipped; processes spawned
   after the preview are not signalled. The process table is read once per action, and one unexpected error no longer

@@ -197,9 +197,8 @@ a missing `label`, or no condition → `RulesError` (never silently ignored).
    each pid is re-checked by `safety.check`, and a pid whose start time differs from the confirmed one is
    reported `reused` and never signalled (this closes the stale-click gap between the dialog and the click);
    a missing pid is `gone`; pid <= 1 and procwatch itself are refused even if absent. `confirmed` cannot be
-   combined with `pids`/`groups`. Bodies with `pids`/`groups` only are still accepted and are planned at
-   execute time (used by the tests and `scripts/operational_check.py`); they have no stale-click protection and
-   the dashboard never sends them.
+   combined with `pids`/`groups`. Bodies with `pids`/`groups` are **rejected (HTTP 400)** for stop and force
+   (decided 2026-10-02: the stale-click guard must not be bypassable); previews still take `pids`/`groups`.
 
 ### HTTP API (`server.py`)
 
@@ -212,8 +211,8 @@ a missing `label`, or no condition → `RulesError` (never silently ignored).
 - `POST /api/preview` (allowed in read-only mode: it changes nothing), body as for stop →
   `{"pids":[…everything that would be signalled, children included…], "targets":[{pid, create_time}…] (same order),
   "refused":[{pid,reason}], "frees":{"mem":bytes,"cpu":pct}}`.
-- `POST /api/stop` / `POST /api/force`, JSON body `{"confirmed":[{pid, create_time}…]}` (see above) or the legacy
-  `{"pids":[…], "groups":["Name",…]}` (either or both, at least one non-empty), header `X-Procwatch-Token`. Returns
+- `POST /api/stop` / `POST /api/force`, JSON body `{"confirmed":[{pid, create_time}…]}` (see above; the `pids`/`groups`
+  form is rejected), header `X-Procwatch-Token`. Returns
   `{"outcomes":[{pid,status}], "refused":[{pid,reason}]}`.
 - `POST /api/explain` (same body, up to 12 processes) → `{"explanation", "pids", "advisory": true}`;
   503 when Explain is not configured or the endpoint is unavailable; 429 when two are already in flight.
@@ -437,6 +436,15 @@ quit; Force ends it immediately" under the buttons.
     page-to-server Stop recorded exactly `SIGTERM 102, SIGTERM 101` (children first) and nothing else.
     Not verified: real signals through the new path (use `scripts/operational_check.py --allow-real-signals`, which
     still exercises the legacy body, plus a `--browser` run, with explicit approval).
+
+13. **Launch-readiness fixes — complete (2026-10-02):** second command `procwatch` (alias `procs`), Python 3.13/3.14
+    classifiers (suite passes on 3.12-3.14), screen-reader label on the checkbox column (axe-core: zero violations
+    in four UI states), no polling while the tab is hidden, a `table_ttl` cache (1 s, `procs` only) shared by
+    read-only requests, and removal of the legacy stop/force body. Tests: `tests/integration/test_table_cache.py`,
+    `tests/unit/test_packaging_and_page.py`; the old server tests now go through preview then confirmed. 322 tests pass.
+    Verified in Chromium (recording-only fixture): hidden tab makes 0 requests in 5 s and one on becoming visible,
+    a page-to-server Stop records exactly SIGTERM 102, 101. Not re-run since the legacy removal: the real-signal
+    script (updated to confirmed-only; needs explicit approval).
 
 Unvalidated: shutdown/data preservation for real user applications and databases, sustained-load performance,
 restricted process fields that macOS denies, and browsers other than Chromium.

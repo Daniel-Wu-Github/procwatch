@@ -39,9 +39,11 @@ Requires macOS (Apple Silicon is the verified platform) and Python 3.12 or newer
 ```sh
 brew install pipx                # once, if you do not have pipx
 pipx install git+https://github.com/Daniel-Wu-Github/procwatch.git
-procs --read-only                # first run: look around without being able to signal anything
-procs                            # normal mode: Stop and Force enabled
+procwatch --read-only            # first run: look around without being able to signal anything
+procwatch                        # normal mode: Stop and Force enabled
 ```
+
+`procs` is installed as a shorter alias for the same command. If you also have the Rust `procs` tool, use `procwatch`.
 
 To upgrade, run `pipx upgrade procwatch`; to remove it, `pipx uninstall procwatch`.
 To work on the code instead, see [Run from a checkout](#run-from-a-checkout-development).
@@ -51,7 +53,7 @@ To work on the code instead, see [Run from a checkout](#run-from-a-checkout-deve
 From any terminal, run:
 
 ```sh
-procs
+procwatch
 ```
 
 The browser opens with Stop and Force enabled. Select a group or process,
@@ -61,7 +63,7 @@ procwatch is one session tied to the terminal that started it. It stops cleanly 
 grace). If the browser crashes without telling procwatch, press Ctrl-C. With `--no-browser` it
 runs until Ctrl-C or until a page you opened is closed.
 
-Only one dashboard runs per user. Running `procs` again does not start a second
+Only one dashboard runs per user. Running `procwatch` again does not start a second
 server: it prints the running instance's URL and mode, and reopens it in the browser
 (unless `--no-browser`). Its options win: to change mode, port or rules, Ctrl-C the
 existing one first. The lease is released automatically if procwatch exits or crashes.
@@ -71,15 +73,15 @@ directory (the operational check does, so it never collides with a real dashboar
 Read-only mode is optional:
 
 ```sh
-procs --read-only           # inspect and preview without sending signals
-procs --no-browser          # print the URL without opening a browser
-procs --rules PATH          # default ~/.config/procwatch/rules.toml
-procs --projects-root PATH  # folder whose subfolders count as projects (default ~/projects)
-procs --port 8765           # optional fixed port; default picks a free port
+procwatch --read-only           # inspect and preview without sending signals
+procwatch --no-browser          # print the URL without opening a browser
+procwatch --rules PATH          # default ~/.config/procwatch/rules.toml
+procwatch --projects-root PATH  # folder whose subfolders count as projects (default ~/projects)
+procwatch --port 8765           # optional fixed port; default picks a free port
 ```
 
-To run `procs` without activating the venv, symlink `.venv/bin/procs` into a directory on your PATH
-(for example `ln -s "$PWD/.venv/bin/procs" ~/bin/procs`). Keep the checkout and venv in place.
+To run `procwatch` without activating the venv, symlink `.venv/bin/procwatch` into a directory on your PATH
+(for example `ln -s "$PWD/.venv/bin/procwatch" ~/bin/procwatch`). Keep the checkout and venv in place.
 
 ### Explain (optional)
 
@@ -119,10 +121,10 @@ runs on this Mac, on another machine you control, or is a hosted API.
 ```sh
 python3.12 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
-.venv/bin/procs
+.venv/bin/procwatch
 ```
 
-For a global shortcut, symlink `.venv/bin/procs` into a directory on your PATH.
+For a global shortcut, symlink `.venv/bin/procwatch` into a directory on your PATH.
 Both Stop and Force require a confirmation listing the process tree and refusals.
 Stop does not escalate automatically.
 
@@ -190,7 +192,7 @@ Keys: `label` plus at least one of `name`, `exe_prefix`, `exe_contains`,
   signal. A process can still exit between a check and the signal; that is
   reported as gone. The OS does not provide an atomic compare-and-signal here.
 - **macOS only; Windows is not supported.** The single-instance lease uses `fcntl`
-  (Unix-only, so `procs` fails at import on Windows). GPU readings come from `ioreg`,
+  (Unix-only, so `procwatch` fails at import on Windows). GPU readings come from `ioreg`,
   system-process protection and app/system grouping rely on macOS paths and process
   names, Stop/Force assume POSIX SIGTERM/SIGKILL (Windows has no equivalent graceful
   signal). Linux is untested.

@@ -6,6 +6,7 @@ from pathlib import Path
 import secrets
 import signal
 import threading
+import time
 from urllib.parse import parse_qs, urlsplit
 
 from .config import ExplainConfig
@@ -44,13 +45,25 @@ from .snapshot import breakdown, build_snapshot, freed, origin
 
 def create_server(*, collect_fn, machine_fn, signal_fn, token, projects_root, rules=(), me,
                   self_pid, allow_kill=True, host='127.0.0.1', port=0, explain_fn=None, explain_config=None, close_grace=3.0,
-                  startup_ancestors=frozenset()):
+                  startup_ancestors=frozenset(), table_ttl=0.0):
     if host != '127.0.0.1':
         raise ValueError('procwatch must bind to 127.0.0.1')
     action_lock = threading.Lock()
     explain_slots = threading.BoundedSemaphore(2)
     pages, session = {}, {'timer': None, 'server': None}   # open page ids; closing the last one ends the session
     session_lock = threading.Lock()
+    table_cache, cache_lock = {'at': 0.0, 'procs': None}, threading.Lock()   # read-only GETs may share one read for table_ttl seconds
+
+    def cached_collect():
+        with cache_lock:
+            if table_cache['procs'] is None or time.monotonic() - table_cache['at'] >= table_ttl:
+                table_cache['procs'] = collect_fn()
+                table_cache['at'] = time.monotonic()
+            return table_cache['procs']
+
+    def drop_cache():
+        with cache_lock:
+            table_cache['procs'] = None
 
     def register_page():
         page_id = secrets.token_urlsafe(8)
@@ -135,8 +148,8 @@ def create_server(*, collect_fn, machine_fn, signal_fn, token, projects_root, ru
         do_GET = dispatch
         do_POST = dispatch
 
-        def table(self):
-            procs = collect_fn()
+        def table(self, fresh=False):
+            procs = collect_fn() if fresh or not table_ttl else cached_collect()   # anything that signals reads fresh
             labels = classify(procs, rules, projects_root)
             # the chain captured at startup still counts if a parent vanished from the live table
             safety = dict(me=me, self_pid=self_pid, ancestors_of_self=ancestors(self_pid, procs) | startup_ancestors)
@@ -178,7 +191,7 @@ def create_server(*, collect_fn, machine_fn, signal_fn, token, projects_root, ru
         def confirmed_action(self, path, confirmed):
             """Signal exactly the pids (with start times) the user confirmed: no re-planning, no new children."""
             with action_lock:
-                procs, labels, safety = self.table()
+                procs, labels, safety = self.table(fresh=True)
                 table = {p.pid: p for p in procs}
                 order, refused = [], []
                 for pid, started in confirmed:
@@ -192,6 +205,7 @@ def create_server(*, collect_fn, machine_fn, signal_fn, token, projects_root, ru
                         order.append(Target(pid, started))   # a missing pid is reported 'gone', a changed start 'reused'
                 outcomes = execute(StopPlan(tuple(order), tuple(refused)), signal.SIGTERM if path == '/api/stop' else signal.SIGKILL,
                                    signal_fn=signal_fn, create_time_of=lambda pid: table[pid].create_time if pid in table else None)
+                drop_cache()
             self.respond(200, dict(outcomes=[asdict(o) for o in outcomes],
                                    refused=[dict(pid=pid, reason=reason) for pid, reason in refused]))
 
@@ -253,22 +267,18 @@ def create_server(*, collect_fn, machine_fn, signal_fn, token, projects_root, ru
                     explain_slots.release()
                 self.respond(200, dict(explanation=text, pids=[p.pid for p in selected], advisory=True))
                 return
+            if path in ('/api/stop', '/api/force'):
+                raise ValueError('Stop and Force need the confirmed list returned by a preview')
             with action_lock:
-                procs, labels, safety = self.table()
+                procs, labels, safety = self.table(fresh=True)
                 if set(groups) - {label.name for label in labels.values()}:
                     raise ValueError('Unknown group')
                 selected = pids + [pid for pid, label in labels.items() if label.name in groups]
                 planned = plan(selected, procs, **safety)
                 refused = [dict(pid=pid, reason=reason) for pid, reason in planned.refused]
-                if path == '/api/preview':
-                    targets = [target.pid for target in planned.order]
-                    result = dict(pids=targets, refused=refused, frees=freed(targets, procs, machine_fn()),
-                                  targets=[dict(pid=t.pid, create_time=t.create_time) for t in planned.order])
-                else:
-                    fresh = {p.pid: p.create_time for p in collect_fn()}   # one fresh read for the whole batch
-                    outcomes = execute(planned, signal.SIGTERM if path == '/api/stop' else signal.SIGKILL,
-                                       signal_fn=signal_fn, create_time_of=fresh.get)
-                    result = dict(outcomes=[asdict(o) for o in outcomes], refused=refused)
+                targets = [target.pid for target in planned.order]
+                result = dict(pids=targets, refused=refused, frees=freed(targets, procs, machine_fn()),
+                              targets=[dict(pid=t.pid, create_time=t.create_time) for t in planned.order])
             self.respond(200, result)
 
     httpd = ThreadingHTTPServer((host, port), Handler)

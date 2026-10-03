@@ -111,6 +111,10 @@ def main():
                     return response.status, json.loads(response.read()), response.headers
             except urllib.error.HTTPError as exc:
                 return exc.code, json.loads(exc.read()), exc.headers
+        def confirmed(body):
+            status, preview, _ = call('/api/preview', body)
+            assert status == 200
+            return {'confirmed': preview['targets']}
         control = start('qa-control')
         graceful = start('qa-graceful')
         stubborn = start('qa-stubborn', 'stubborn')
@@ -140,33 +144,33 @@ def main():
             status, _, _ = call('/api/stop', {'pids':[control.pid]}, **kwargs)
             assert status == 403 and alive(control)
             record(name+' rejected without signalling owned control')
-        for body in ({}, {'pids':'bad'}):
+        for body in ({}, {'pids':'bad'}, {'pids':[control.pid]}, {'confirmed':[]}):
             status, _, _ = call('/api/stop', body)
             assert status == 400 and alive(control)
-        record('Malformed action bodies rejected without signalling control')
+        record('Malformed bodies and the old pids-only body are rejected without signalling control')
         status, preview, _ = call('/api/preview', {'pids':[graceful.pid]})
         assert status == 200 and preview['pids'] == [graceful.pid] and alive(graceful)
         record('Preview returns owned target and sends no signal')
-        status, data, _ = call('/api/stop', {'pids':[graceful.pid]})
+        status, data, _ = call('/api/stop', confirmed({'pids':[graceful.pid]}))
         assert status == 200 and data['outcomes'] == [{'pid':graceful.pid,'status':'signalled'}]
         assert graceful.wait(timeout=10) == 0 and (processes['qa-graceful'][1]/'graceful.done').exists()
         record('Real Stop delivers SIGTERM and permits graceful cleanup', pid=graceful.pid, returncode=0)
-        status, data, _ = call('/api/force', {'pids':[forced.pid]})
+        status, data, _ = call('/api/force', confirmed({'pids':[forced.pid]}))
         assert status == 200 and forced.wait(timeout=10) == -signal.SIGKILL
         assert not (processes['qa-force'][1]/'graceful.done').exists()
         record('Real Force delivers SIGKILL without graceful cleanup', pid=forced.pid, returncode=-9)
-        status, _, _ = call('/api/stop', {'pids':[stubborn.pid]})
+        status, _, _ = call('/api/stop', confirmed({'pids':[stubborn.pid]}))
         assert status == 200
         wait_for(lambda: (processes['qa-stubborn'][1]/'stubborn.term').exists())
         time.sleep(5)
         assert alive(stubborn)
         record('SIGTERM-ignoring target survives Stop for 5 seconds; no automatic escalation')
-        status, _, _ = call('/api/force', {'pids':[stubborn.pid]})
+        status, _, _ = call('/api/force', confirmed({'pids':[stubborn.pid]}))
         assert status == 200 and stubborn.wait(timeout=10) == -signal.SIGKILL
         record('Separate explicit Force terminates SIGTERM-ignoring target')
         status, preview, _ = call('/api/preview', {'groups':['qa-tree'], 'pids':[tree.pid]})
         assert status == 200 and preview['pids'] == list(reversed(tree_pids))
-        status, data, _ = call('/api/stop', {'groups':['qa-tree'], 'pids':[tree.pid]})
+        status, data, _ = call('/api/stop', confirmed({'groups':['qa-tree'], 'pids':[tree.pid]}))
         assert status == 200 and [o['pid'] for o in data['outcomes']] == list(reversed(tree_pids))
         assert all(o['status']=='signalled' for o in data['outcomes'])
         assert tree.wait(timeout=10) == 0
@@ -198,10 +202,10 @@ def main():
         status, data, _ = call('/api/force', {'confirmed':preview['targets']})
         assert status == 200 and c_stubborn.wait(timeout=10) == -signal.SIGKILL and alive(control)
         record('Confirmed Force terminates it with SIGKILL; unrelated control survives')
-        status, data, _ = call('/api/stop', {'pids':[graceful.pid]})
-        assert status == 200 and not data['outcomes'] and data['refused'][0]['pid']==graceful.pid
+        status, data, _ = call('/api/stop', {'confirmed':[{'pid':graceful.pid, 'create_time':identities[graceful.pid]}]})
+        assert status == 200 and data['outcomes'] == [{'pid':graceful.pid,'status':'gone'}]
         assert alive(control)
-        record('Exited target is refused; unrelated disposable control survives')
+        record('Exited target is reported gone and not signalled; unrelated disposable control survives')
         if args.browser:
             stop = start('qa-browser-stop')
             force = start('qa-browser-force', 'stubborn')

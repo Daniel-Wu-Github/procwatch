@@ -73,6 +73,13 @@ def call(port, path, method="GET", body=None, headers=None, origin=True, token_h
         return e.code, e.read(), e.headers
 
 
+def confirmed(port, body):
+    """What the dashboard sends: the exact targets (with start times) from a preview of this selection."""
+    status, raw, _ = call(port, "/api/preview", "POST", body)
+    assert status == 200
+    return {"confirmed": json.loads(raw)["targets"]}
+
+
 def snapshot(port, metric="mem"):
     status, body, _ = call(port, f"/api/snapshot?metric={metric}&token={TOKEN}")
     assert status == 200
@@ -197,7 +204,7 @@ def test_preview_accepts_groups_and_validates_the_body(served):
 
 def test_stop_sends_sigterm_to_a_process_and_its_children_children_first(served):
     port, rec, _ = served
-    status, body, _ = call(port, "/api/stop", "POST", {"pids": [900]})
+    status, body, _ = call(port, "/api/stop", "POST", confirmed(port, {"pids": [900]}))
     result = json.loads(body)
     assert status == 200
     assert rec.calls == [(901, signal.SIGTERM), (900, signal.SIGTERM)]
@@ -206,29 +213,36 @@ def test_stop_sends_sigterm_to_a_process_and_its_children_children_first(served)
 
 def test_force_sends_sigkill(served):
     port, rec, _ = served
-    status, _, _ = call(port, "/api/force", "POST", {"pids": [950]})
+    status, _, _ = call(port, "/api/force", "POST", confirmed(port, {"pids": [950]}))
     assert status == 200 and rec.calls == [(950, signal.SIGKILL)]
 
 
 def test_stopping_a_group_by_name_signals_every_member(served):
     port, rec, _ = served
-    status, _, _ = call(port, "/api/stop", "POST", {"groups": ["web-app"]})
+    status, _, _ = call(port, "/api/stop", "POST", confirmed(port, {"groups": ["web-app"]}))
     assert status == 200 and {pid for pid, _ in rec.calls} == {900, 901}
 
 
 def test_pids_and_groups_together_signal_each_process_once(served):
     port, rec, _ = served
-    call(port, "/api/stop", "POST", {"pids": [900, 950], "groups": ["web-app"]})
+    call(port, "/api/stop", "POST", confirmed(port, {"pids": [900, 950], "groups": ["web-app"]}))
     assert sorted(pid for pid, _ in rec.calls) == [900, 901, 950]
 
 
 def test_refused_processes_are_reported_and_never_signalled(served):
     port, rec, _ = served
-    status, body, _ = call(port, "/api/stop", "POST", {"pids": [1, 500, 400, 960, 950]})
-    result = json.loads(body)
+    status, body, _ = call(port, "/api/preview", "POST", {"pids": [1, 500, 400, 960, 950]})
+    preview = json.loads(body)
+    assert status == 200 and [t["pid"] for t in preview["targets"]] == [950]
+    assert {r["pid"] for r in preview["refused"]} == {1, 500, 400, 960} and all(r["reason"] for r in preview["refused"])
+    status, body, _ = call(port, "/api/stop", "POST", {"confirmed": preview["targets"]})
     assert status == 200 and rec.calls == [(950, signal.SIGTERM)]
+    # even a forged confirmation naming the refused pids cannot signal them
+    forged = [{"pid": p.pid, "create_time": p.create_time} for p in PROCS if p.pid in {1, 500, 400, 960}]
+    status, body, _ = call(port, "/api/stop", "POST", {"confirmed": forged})
+    result = json.loads(body)
+    assert status == 200 and rec.calls == [(950, signal.SIGTERM)] and result["outcomes"] == []
     assert {r["pid"] for r in result["refused"]} == {1, 500, 400, 960}
-    assert all(r["reason"] for r in result["refused"])
 
 
 def test_an_unknown_group_or_bad_body_is_a_400_and_signals_nothing(served):
@@ -256,7 +270,7 @@ def test_a_pid_whose_start_time_changed_since_the_snapshot_is_not_signalled():
     state = {"n": 0}
 
     def collect():
-        # first read (planning) says pid 950 started at 3.0; by execution it is a different process
+        # the preview read says pid 950 started at 3.0; by the time it is confirmed it is a different process
         state["n"] += 1
         return [p if p.pid != 950 or state["n"] == 1 else P(950, 1, "Other", "/x", create_time=99.0) for p in PROCS]
 
@@ -264,7 +278,7 @@ def test_a_pid_whose_start_time_changed_since_the_snapshot_is_not_signalled():
     port = server.server_address[1]
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        status, body, _ = call(port, "/api/stop", "POST", {"pids": [950]})
+        status, body, _ = call(port, "/api/stop", "POST", confirmed(port, {"pids": [950]}))
         assert status == 200 and rec.calls == []
         assert json.loads(body)["outcomes"][0]["status"] == "reused"
     finally:

@@ -84,7 +84,7 @@ def run(args, rules, parser, instance, explain):
         server = create_server(collect_fn=collect, machine_fn=machine, signal_fn=os.kill, token=token,
                                projects_root=str(args.projects_root.expanduser().resolve()), rules=rules,
                                me=getpass.getuser(), self_pid=os.getpid(), allow_kill=not args.read_only, port=args.port,
-                               explain_config=explain, startup_ancestors=_startup_ancestors())
+                               explain_config=explain, startup_ancestors=_startup_ancestors(), table_ttl=1.0)
     except OSError as exc:
         parser.error(f'Unable to start server: {exc}')
     url = f'http://127.0.0.1:{server.server_address[1]}/?token={token}'

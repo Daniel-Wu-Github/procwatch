@@ -162,12 +162,13 @@ def test_a_large_confirmed_stop_reads_the_process_table_once(serve):
     assert status == 200 and len(world.signals) == 40 and world.collects - before == 1
 
 
-def test_the_legacy_body_still_reads_the_table_a_fixed_number_of_times(serve):
-    world = World([P(100 + i, create_time=float(i)) for i in range(40)])
+@pytest.mark.parametrize('path', ['/api/stop', '/api/force'])
+@pytest.mark.parametrize('body', [{'pids': [10]}, {'groups': ['x']}, {'pids': [10], 'groups': ['x']}])
+def test_the_old_pids_and_groups_body_can_no_longer_signal_anything(serve, path, body):
+    world = tree()
     server = serve(world)
-    before = world.collects
-    assert post(server, '/api/stop', {'pids': [100 + i for i in range(40)]})[0] == 200
-    assert world.collects - before <= 2
+    status, data = post(server, path, body)
+    assert status == 400 and 'confirmed' in data['error'] and world.signals == []
 
 
 def test_startup_ancestors_stay_protected_even_if_the_live_chain_is_broken(serve):
