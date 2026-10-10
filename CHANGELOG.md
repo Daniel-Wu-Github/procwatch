@@ -2,47 +2,43 @@
 
 All notable changes are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [1.0.0] - 2026-10-10
+
+First public release.
 
 ### Added
-- A second command name, `procwatch`, alongside the `procs` alias (the Homebrew `procs` tool uses the same name).
-- Configurable Explain: point it at any OpenAI-compatible chat endpoint (Ollama, LM Studio, a hosted API)
-  through `~/.config/procwatch/config.toml` or `--explain-url`, `--explain-model`, `--allow-remote-explain`.
-  Off until configured. Optional custom prompt file (a fixed safety guard is always appended) and an API key
-  read from an environment variable. A non-loopback endpoint needs explicit opt-in, https, and is flagged in the UI.
-- Demo GIF and screenshots, `LICENSE`, `SECURITY.md`, `CONTRIBUTING.md` and a CI workflow.
+- **Dashboard:** a donut of the whole machine for memory, CPU and GPU (GPU is machine-level only), with hover,
+  drill-down into groups, processes and child processes, and live updates that pause while you interact. The page
+  stops polling while its tab is hidden, and its checkbox column has a screen-reader label (axe-core reports no
+  WCAG 2.1 A/AA or best-practice violations).
+- **Free up:** a basket with an estimated saving, then Stop (SIGTERM) and Force (SIGKILL) as separate, confirmed
+  actions. Stop never escalates to Force.
+- **Where a process came from:** app or project folder, executable, working directory, command line and parent chain.
+  Grouping is automatic and editable through `rules.toml`.
+- **Explain (optional, off by default):** point it at any OpenAI-compatible chat endpoint (Ollama, LM Studio, a hosted
+  API) through `~/.config/procwatch/config.toml` or `--explain-url`, `--explain-model` and `--allow-remote-explain`.
+  Optional custom prompt file (a fixed safety guard is always appended) and an API key read from an environment
+  variable. A non-loopback endpoint needs explicit opt-in and https, and is flagged in the UI. Command lines and
+  usernames are never sent. At most two Explain requests run at once.
+- **Commands:** `procwatch`, with `procs` as a shorter alias (the Homebrew `procs` tool uses that name too).
+  `--read-only` disables Stop and Force on the server.
+- **One session per terminal:** `procwatch` stops cleanly on Ctrl-C, SIGTERM, a closed terminal (SIGHUP) or when the
+  last browser tab closes (a reload gets a short grace period). Ctrl-C does not wait for a slow Explain request, and an
+  in-flight Stop or Force gets up to 10 s to finish and report. A second `procwatch` reuses the running one. A stale
+  link shows a short "link expired" page.
+- **Project files:** `LICENSE` (MIT), `SECURITY.md`, `CONTRIBUTING.md`, issue and PR templates, a macOS CI workflow,
+  a demo GIF and screenshots. Python 3.12 to 3.14 are supported.
 
-### Changed
-- **Breaking (API):** `POST /api/stop` and `/api/force` accept only the `confirmed` list from a preview. The old
-  `pids`/`groups` body is rejected with HTTP 400, so the stale-click guard cannot be bypassed.
-- The dashboard stops polling while its tab is hidden and refreshes when it becomes visible again. The server shares one
-  process-table read between read-only requests for up to a second (`procs` only; Stop, Force and previews always read fresh).
-- The checkbox column header has a screen-reader label (axe-core reports no WCAG 2.1 A/AA or best-practice violations).
-- Declared support for Python 3.13 and 3.14 (the suite passes on both).
-- Stop and Force now signal exactly the processes you confirmed. The preview returns each target's start time, the
-  page sends them back, and a pid whose start time changed (reused by another process) is skipped; processes spawned
-  after the preview are not signalled. The process table is read once per action, and one unexpected error no longer
-  aborts the rest of a batch. On exit, an in-flight Stop/Force is given up to 10 s to finish and report.
-- More system paths are protected: `/usr/sbin/`, `/sbin/`, Cryptex system libexec/OS paths and `/Library/Apple/`.
-  The terminal chain above procwatch is captured at startup so it stays protected.
-- `procs` is now one session per terminal: it stops cleanly on Ctrl-C, SIGTERM, a closed terminal (SIGHUP), or when
-  the last browser tab closes (a reload is allowed a short grace period). Ctrl-C no longer waits for a slow Explain request.
-- The page sends its token as a header instead of in fetch URLs. A stale link (procwatch restarted) shows a short
-  "link expired" page instead of bare JSON.
-- The page script uses a per-response CSP nonce instead of `unsafe-inline`.
-- Executables under `/usr/libexec/` and `/System/Library/` are protected from Stop and Force.
-- At most two Explain requests run at once (HTTP 429 beyond that).
-- The Explain safety guard now also tells the model to describe only the listed processes and never invent others.
-
-### Fixed
-- The instance lock file is opened with `O_NOFOLLOW` and its directory forced to private permissions.
-- A repeat `procs` opens only `http://127.0.0.1:<port>` URLs from the lease file.
-- Bad query or `Content-Length` input is no longer echoed back in error responses.
-
-## [1.0.0]
-
-- Donut view of memory, CPU and GPU with hover, drill-down into processes and children, and a "Free up"
-  basket with separate Stop (SIGTERM) and Force (SIGKILL).
-- Per-process origin: app or project folder, executable, working directory, command line, parent chain.
-- Local server on `127.0.0.1` with per-run token, Host and Origin checks, `--read-only` mode, a single-instance
-  lease, and an editable `rules.toml` for grouping.
+### Safety and security
+- Stop and Force signal exactly the targets you confirmed. A preview returns each target's start time, the dashboard
+  sends them back, and the server skips any pid whose start time changed (reused by another process). Processes spawned
+  after the preview are not signalled. The process table is read once per action, and one unexpected error does not
+  abort the rest of a batch. The old `pids`/`groups` body is rejected with HTTP 400, so the stale-click guard cannot
+  be bypassed.
+- Never signalled: processes you do not own, pid 0 and 1, procwatch itself, its terminal and shell chain (captured at
+  startup), protected macOS processes, and executables under `/usr/libexec/`, `/usr/sbin/`, `/sbin/`,
+  `/System/Library/`, system Cryptex paths and `/Library/Apple/`.
+- The server binds `127.0.0.1` only and requires a per-run token and a loopback `Host`; POSTs also need a same-origin
+  `Origin`. The page uses a per-response CSP nonce (no `unsafe-inline` for scripts) and sends its token as a header.
+- The instance lock file is opened with `O_NOFOLLOW` in a private directory, a repeat launch opens only
+  `http://127.0.0.1:<port>` URLs, and bad input is not echoed back in error responses.
